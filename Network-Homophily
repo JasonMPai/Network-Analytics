@@ -1,0 +1,376 @@
+
+Load Libraries and Files
+```{R}
+library(readr)
+library(igraph)
+library(ggplot2)
+
+# load the adopter files
+worldcup = read.csv("worldcup.csv")
+love = read.csv("love.csv")
+selfie = read.csv("selfie.csv")
+tbt = read.csv("tbt.csv")
+all_users = read.csv("all_users.csv")
+graph_complete = read.graph("graph_complete.txt", format = "ncol", directed = TRUE)
+```
+
+4.1 Tweeted Hashtags
+Assume that a user in all users.csv is “treated” for a certain hashtag h at time tt if one of her friends (users she follows) tweeted hashtag h before time t and tt > t. Note that a user can be treated without adopting (hence many users from the all users.csv file are treated but never adopt). For each user, use the graph complete.txt file from your first assignment to find his/her friends (users that he/she follows).
+
+```{R}
+# a user's friends are the users that he/she follows, so use out degree
+following = degree(graph_complete, v = V(graph_complete), mode = "out")
+
+# map users to their friends
+all_users$following = following[as.character(all_users$id)]
+
+# get only the users following other users
+users_subset = all_users[all_users$following > 0, ]
+```
+
+4.2 Treated vs. Not-Treated
+Create a data set that includes all the users (‘treated’ and ‘not-treated’). Ignore all users that have no friends because we don’t know whether they have been treated or not. The resulting file should have the form presented in Table 1.
+```{R}
+# Generic function: for each user, check if they are adopters, i.e. if they
+# are in the hashtag file
+check_adopted = function(user_row, treatment) {
+    
+    # check if the user tweeted
+    did_tweet = treatment[treatment$id == as.integer(user_row["id"]), ]
+    nrow(did_tweet) > 0
+}
+
+# Generic function: for each user, check if they are following a user who
+# has tweeted
+check_treated = function(user_row, treatment, graphtocheck) {
+    v = as_ids(neighbors(graph_complete, as.character(user_row["id"]), mode = "out"))
+    # check the user's friends who tweeted the hashtag
+    did_tweet = treatment[is.element(as.character(treatment$id), v), ]
+    
+    # time tt
+    tt = user_row["timeStamp"]
+    # time tasterisk is the median timestamp of the treatment data
+    tasterisk = median(treatment$timeStamp, na.rm = TRUE)
+    
+    # a user is treated for a certain hashtag at time tt if one of her friends
+    # tweeted hashtag before time tasterisk and tt > ttreatment.
+    influencers = did_tweet[!is.na(did_tweet$timeStamp) & did_tweet$timeStamp < 
+        tasterisk & tt > tasterisk, ]
+    nrow(influencers) > 0
+}
+
+```
+
+4.3 Load Datasets
+
+```{R}
+# propensity table for tbt hashtag
+treated = apply(users_subset, 1, function(x) check_treated(x, tbt, graph_complete))
+tbt_propensity = data.frame(users_subset, treated)
+
+# add adopter flag
+adopted = apply(users_subset, 1, function(x) check_adopted(x, tbt))
+tbt_propensity = data.frame(tbt_propensity, adopted)
+tbt_propensity$adopted = as.factor(tbt_propensity$adopted)
+# View(tbt_propensity)
+
+# propensity table for worldcup hashtag
+treated = apply(users_subset, 1, function(x) check_treated(x, worldcup, graph_complete))
+worldcup_propensity = data.frame(users_subset, treated)
+
+# add adopter flag
+adopted = apply(users_subset, 1, function(x) check_adopted(x, worldcup))
+worldcup_propensity = data.frame(worldcup_propensity, adopted)
+worldcup_propensity$adopted = as.factor(worldcup_propensity$adopted)
+# View(worldcup_propensity)
+
+# propensity table for love hashtag
+treated = apply(users_subset, 1, function(x) check_treated(x, love, graph_complete))
+love_propensity = data.frame(users_subset, treated)
+
+# add adopter flag
+adopted = apply(users_subset, 1, function(x) check_adopted(x, love))
+love_propensity = data.frame(love_propensity, adopted)
+love_propensity$adopted = as.factor(love_propensity$adopted)
+# View(love_propensity)
+
+# propensity table for selfie hashtag
+treated = apply(users_subset, 1, function(x) check_treated(x, selfie, graph_complete))
+selfie_propensity = data.frame(users_subset, treated)
+
+# add adopter flag
+adopted = apply(users_subset, 1, function(x) check_adopted(x, selfie))
+selfie_propensity = data.frame(selfie_propensity, adopted)
+selfie_propensity$adopted = as.factor(selfie_propensity$adopted)
+# View(selfie_propensity)
+
+```
+
+4.4 Build Regression Model
+Use the previous file to build a logistic regression model (using the fields location, followers, friends, and statuses) that estimates the probability of a user being treated. The target variable is treated.
+
+```{R}
+# tbt
+tbt_propensity$treated = as.factor(tbt_propensity$treated)
+fit_tbt <- glm(treated ~ location + followers + friends + statuses, data = tbt_propensity, 
+    family = binomial(link = "logit"))
+# summary(fit_tbt)
+
+# worldcup
+worldcup_propensity$treated = as.factor(worldcup_propensity$treated)
+fit_worldcup <- glm(treated ~ location + followers + friends + statuses, data = worldcup_propensity, 
+    family = binomial(link = "logit"))
+# summary(fit_worldcup)
+
+# selfie
+selfie_propensity$treated = as.factor(selfie_propensity$treated)
+fit_selfie <- glm(treated ~ location + followers + friends + statuses, data = selfie_propensity, 
+    family = binomial(link = "logit"))
+# summary(fit_selfie)
+
+# love
+love_propensity$treated = as.factor(love_propensity$treated)
+fit_love <- glm(treated ~ location + followers + friends + statuses, data = love_propensity, 
+    family = binomial(link = "logit"))
+# summary(fit_love)
+
+# scoring - add propensity scores to each dataset
+tbt_scores <- as.data.frame(predict(fit_tbt, tbt_propensity, type = "response"))
+tbt_propensity = data.frame(tbt_propensity, tbt_scores)
+colnames(tbt_propensity)[10] = "score"
+
+worldcup_scores <- as.data.frame(predict(fit_worldcup, worldcup_propensity, 
+    type = "response"))
+worldcup_propensity = data.frame(worldcup_propensity, worldcup_scores)
+colnames(worldcup_propensity)[10] = "score"
+
+selfie_scores <- as.data.frame(predict(fit_selfie, selfie_propensity, type = "response"))
+selfie_propensity = data.frame(selfie_propensity, selfie_scores)
+colnames(selfie_propensity)[10] = "score"
+
+love_scores <- as.data.frame(predict(fit_love, love_propensity, type = "response"))
+love_propensity = data.frame(love_propensity, love_scores)
+colnames(love_propensity)[10] = "score"
+
+```
+4.5 Matched Sample Pairs
+Now you have estimated the probability of being treated for each instance. Create matched sample pairs by following a simplified version of the procedure outlined in [1]. Here, you will essentially go through all the treated users and find the untreated user with the closest propensity score (probability of being treated) to that of the treated user. These two users (the treated and matched untreated users) make up the matched sample. Users that do not have any matches are ignored (for details on what defines a match not existing, see [1]).
+
+
+```{R}
+# Generic function to get matched pairs
+get_match = function(treated_score, untreated) {
+    average = mean(untreated$score)
+    sd = sd(untreated$score)
+    n = length(untreated$score)
+    
+    # use t distribution to get upper and lower limits for 2 standard deviations
+    error <- qt(0.975, df = n - 1) * sd/sqrt(n)
+    left <- average - error
+    right <- average + error
+    
+    m = min(abs(untreated$score - treated_score))
+    matched_untreated = untreated$score[which(abs(untreated$score - treated_score) == 
+        m)]
+    matched_untreated_id = untreated$id[which(abs(untreated$score - treated_score) == 
+        m)]
+    
+    if (length(matched_untreated) == 0) {
+        # equivalent to no match
+        -1
+    } else {
+        # just get the first match
+        firstmatch = matched_untreated[1]
+        firstmatchid = matched_untreated_id[1]
+        # only include matches that are within 2 standard deviations of the mean
+        if (firstmatch > left & m < right) {
+            firstmatchid
+        } else {
+            # equivalent to no match
+            -1
+        }
+    }
+}
+
+# Generic function to get the untreated match sample's adopted flag
+get_untreated_match_adopted_flag = function(untreated_id, untreated) {
+    if (untreated_id == -1) {
+        -1
+    } else {
+        matching_untreated = untreated[untreated$id == as.integer(untreated_id), 
+            ]
+        if (matching_untreated$adopted == TRUE) {
+            1
+        } else {
+            0
+        }
+    }
+}
+
+```
+
+4.6 Create Matched Samples
+
+```{R}
+# tbt Create matched sample for tbt hashtag
+true_tbts = tbt_propensity[tbt_propensity$treated == TRUE, ]
+false_tbts = tbt_propensity[tbt_propensity$treated == FALSE, ]
+# for each true instance, find a matching untreated user with the closest
+# propensity score
+untreated_match = apply(as.data.frame(true_tbts$score), 1, function(x) get_match(x, 
+    false_tbts))
+# don't forget the adopted flag of these untreated matches!
+untreated_match_adopted = apply(as.data.frame(as.integer(untreated_match)), 
+    1, function(x) get_untreated_match_adopted_flag(x, false_tbts))
+# create matched tbt sample
+matched_tbts = data.frame(true_tbts, untreated_match, untreated_match_adopted)
+matched_tbts$untreated_match_adopted = matched_tbts$untreated_match_adopted > 
+    0
+matched_tbts = matched_tbts[matched_tbts$untreated_match > -1, ]
+# View(matched_tbts)
+
+# worldcup Create matched sample for tbt hashtag
+true_worldcup = worldcup_propensity[worldcup_propensity$treated == TRUE, ]
+false_worldcup = worldcup_propensity[worldcup_propensity$treated == FALSE, ]
+# for each true instance, find a matching untreated user with the closest
+# propensity score
+untreated_match = apply(as.data.frame(true_worldcup$score), 1, function(x) get_match(x, 
+    false_worldcup))
+# don't forget the adopted flag of these untreated matches!
+untreated_match_adopted = apply(as.data.frame(as.integer(untreated_match)), 
+    1, function(x) get_untreated_match_adopted_flag(x, false_worldcup))
+# create matched worldcup sample
+matched_worldcup = data.frame(true_worldcup, untreated_match, untreated_match_adopted)
+matched_worldcup$untreated_match_adopted = matched_worldcup$untreated_match_adopted > 
+    0
+matched_worldcup = matched_worldcup[matched_worldcup$untreated_match > -1, ]
+# View(matched_worldcup)
+
+# selfie Create matched sample for selfie hashtag
+true_selfie = selfie_propensity[selfie_propensity$treated == TRUE, ]
+false_selfie = selfie_propensity[selfie_propensity$treated == FALSE, ]
+# for each true instance, find a matching untreated user with the closest
+# propensity score
+untreated_match = apply(as.data.frame(true_selfie$score), 1, function(x) get_match(x, 
+    false_selfie))
+# don't forget the adopted flag of these untreated matches!
+untreated_match_adopted = apply(as.data.frame(as.integer(untreated_match)), 
+    1, function(x) get_untreated_match_adopted_flag(x, false_selfie))
+# create matched selfie sample
+matched_selfie = data.frame(true_selfie, untreated_match, untreated_match_adopted)
+matched_selfie$untreated_match_adopted = matched_selfie$untreated_match_adopted > 
+    0
+matched_selfie = matched_selfie[matched_selfie$untreated_match > -1, ]
+# View(matched_selfie)
+
+# love Create matched sample for love hashtag
+true_love = love_propensity[love_propensity$treated == TRUE, ]
+false_love = love_propensity[love_propensity$treated == FALSE, ]
+# for each true instance, find a matching untreated user with the closest
+# propensity score
+untreated_match = apply(as.data.frame(true_love$score), 1, function(x) get_match(x, 
+    false_love))
+# don't forget the adopted flag of these untreated matches!
+untreated_match_adopted = apply(as.data.frame(as.integer(untreated_match)), 
+    1, function(x) get_untreated_match_adopted_flag(x, false_love))
+# create matched love sample
+matched_love = data.frame(true_love, untreated_match, untreated_match_adopted)
+matched_love$untreated_match_adopted = matched_love$untreated_match_adopted > 
+    0
+matched_love = matched_love[matched_love$untreated_match > -1, ]
+# View(matched_love)
+
+```
+4.7 Compute Ratio
+For all four adopter files, please answer the following questions.1. Compute the ratio of treated to non-treated adopters for the matched sample, r(m) = n+ / n- where n+ is the number of treated adopters and n- is the number of non-treated adopters.
+```{R}
+# tbt
+tbt_treated_adopters = matched_tbts[matched_tbts$adopted == TRUE, ]
+tbt_non_treated_adopters = matched_tbts[matched_tbts$untreated_match_adopted == 
+    TRUE, ]
+ratio_tbts = nrow(tbt_treated_adopters)/nrow(tbt_non_treated_adopters)
+
+# worldcup
+worldcup_treated_adopters = matched_worldcup[matched_worldcup$adopted == TRUE, 
+    ]
+worldcup_non_treated_adopters = matched_worldcup[matched_worldcup$untreated_match_adopted == 
+    TRUE, ]
+ratio_worldcup = nrow(worldcup_treated_adopters)/nrow(worldcup_non_treated_adopters)
+
+# selfie
+selfie_treated_adopters = matched_selfie[matched_selfie$adopted == TRUE, ]
+selfie_non_treated_adopters = matched_selfie[matched_selfie$untreated_match_adopted == 
+    TRUE, ]
+ratio_selfie = nrow(selfie_treated_adopters)/nrow(selfie_non_treated_adopters)
+
+# love
+love_treated_adopters = matched_love[matched_love$adopted == TRUE, ]
+love_non_treated_adopters = matched_love[matched_love$untreated_match_adopted == 
+    TRUE, ]
+ratio_love = nrow(love_treated_adopters)/nrow(love_non_treated_adopters)
+
+```
+
+4.8 Random Match
+Now randomly match each item in the treated set with a non-treated one. Compute the ratio, rr = n+/n-. Repeat this 100 times and find the average ratio, r_r.
+```{R}
+# Generic function to get a random element of the untreated set
+get_random_match = function (treated_id, untreated) {
+  random_id = sample(1:nrow(untreated),1)
+  untreated[random_id,]$id
+}
+
+# Generic function to randomly match to an untreated sample, compute the ratio rr = n+/n-,
+# repeat 100 times and find the average ratio, r_r.
+compute_random_match_ratio = function(true_treatment, false_treatment) {
+    random_ratio = numeric()
+    for (i in 1:100) {
+      #Create randomly-matched sample for tbt hashtag
+      #for each true instance, find a matching untreated user with the closest propensity score
+      untreated_random_match = apply(as.data.frame(true_treatment$id), 1, 
+                                     function(x) get_random_match(x, false_treatment))
+      #don't forget the adopted flag of these untreated matches!
+      untreated_match_adopted = apply(as.data.frame(as.integer(untreated_random_match)), 1, 
+                                    function(x) get_untreated_match_adopted_flag(x, false_treatment))
+      #create matched tbt sample
+      random_matched_sample = data.frame(true_treatment, 
+                                         untreated_random_match,untreated_match_adopted)
+      random_matched_sample$untreated_match_adopted = 
+        random_matched_sample$untreated_match_adopted>0
+      random_treated_adopters = 
+        random_matched_sample[random_matched_sample$adopted==TRUE,]
+      random_non_treated_adopters = 
+        random_matched_sample[random_matched_sample$untreated_match_adopted==TRUE,]
+    
+      random_ratio[i] = nrow(random_treated_adopters)/nrow(random_non_treated_adopters)
+    }
+    #Find the average ratio
+    mean(random_ratio)    
+}
+
+#compute the r_r for tbt
+r_r_tbt = compute_random_match_ratio(true_tbts,false_tbts)
+# head(r_r_tbt)
+
+#compute the r_r for worldcup
+r_r_worldcup = compute_random_match_ratio(true_worldcup,false_worldcup)
+# head(r_r_worldcup)
+
+#compute the r_r for selfie
+r_r_selfie = compute_random_match_ratio(true_selfie,false_selfie)
+# head(r_r_selfie)
+
+#compute the r_r for love
+r_r_love = compute_random_match_ratio(true_selfie,false_love)
+# head(r_r_love)
+
+```
+
+4.9 Conclusions: Discuss and Interpret
+In general, the above values (except for worldcup) show that ratios for random matching are higher than the ratios for matched sampling.
+
+This is because matched sampling controls for confounding factors and selection bias by comparing observations that have the same likelihood of treatment (i.e. matching treated to untreated samples with the closest propensity scores), while random matching does not. Matched sampling also accounts for temporal clustering, where “treatment” was redefined to capture the effect of having a friend who adopted within a certain time period (i.e. the friend must have tweeted before the user, and the user must have tweeted after the median of the timestamps in the adopter file).
+
+Random sampling simply matches a treated to an untreated sample randomly and does not have the same restrictions as the matched sampling. This makes it more likely to overestimate influence - a user who is considered treated might not actually be treated due to influence but due to homophily. Note that looking at the stats for all four datasets, we could not see why world cup would have a lower ratio for random sampling than matched sampling (unlike the other 3 datasets).
+
+The only connection we could see to the lower random matching ratio is the world cup dataset had a large percentage of matched samples compared to the other 3 datasets (Out of 275 treated, 249 or 90% were matched). Perhaps being able to match almost all the samples counteracts the controls for homophily in matched sampling.
